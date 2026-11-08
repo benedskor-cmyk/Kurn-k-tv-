@@ -1,9 +1,3 @@
-# ═══════════════════════════════════════════════════════════════════
-#  Kurník Kvok – aplikace pro Android TV (APK)
-#  Tento JEDEN soubor vytvoří na GitHubu celý Android projekt,
-#  sestaví z něj aplikaci a nabídne ji ke stažení (záložka Releases).
-#  Adresa prezentace se dá změnit při ručním spuštění (Run workflow).
-# ═══════════════════════════════════════════════════════════════════
 name: Sestavit APK pro Android TV
 
 on:
