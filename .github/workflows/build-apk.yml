@@ -1,1 +1,419 @@
+# ═══════════════════════════════════════════════════════════════════
+#  Kurník Kvok – aplikace pro Android TV (APK)
+#  Tento JEDEN soubor vytvoří na GitHubu celý Android projekt,
+#  sestaví z něj aplikaci a nabídne ji ke stažení (záložka Releases).
+#  Adresa prezentace se dá změnit při ručním spuštění (Run workflow).
+# ═══════════════════════════════════════════════════════════════════
+name: Sestavit APK pro Android TV
 
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Adresa prezentace (stránka /tv)'
+        required: true
+        default: 'https://delicate-thunder-96c2.benedskor.workers.dev/tv'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      APP_URL: ${{ github.event.inputs.url || 'https://delicate-thunder-96c2.benedskor.workers.dev/tv' }}
+    steps:
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Vytvořit Android projekt
+        run: |
+          set -euo pipefail
+          P=kurnik-tv
+          mkdir -p $P/app/src/main/java/cz/kvok/kurnik $P/app/src/main/res/values
+          cd $P
+          URL_XML=$(printf '%s' "$APP_URL" | sed 's/&/\&amp;/g')
+
+          cat > settings.gradle <<'GRADLE_EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "KurnikTV"
+          include ':app'
+          GRADLE_EOF
+
+          cat > build.gradle <<'GRADLE_EOF'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          GRADLE_EOF
+
+          cat > gradle.properties <<'GRADLE_EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.nonTransitiveRClass=true
+          GRADLE_EOF
+
+          cat > app/build.gradle <<'GRADLE_EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'cz.kvok.kurnik'
+              compileSdk 34
+
+              defaultConfig {
+                  applicationId 'cz.kvok.kurnik'
+                  minSdk 21
+                  targetSdk 34
+                  versionCode 2
+                  versionName '1.1'
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          GRADLE_EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'XML_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+              <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+              <uses-feature android:name="android.software.leanback" android:required="false" />
+
+              <application
+                  android:allowBackup="false"
+                  android:icon="@mipmap/ic_launcher"
+                  android:banner="@drawable/banner"
+                  android:label="@string/app_name"
+                  android:hardwareAccelerated="true"
+                  android:theme="@style/AppTheme">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation|uiMode|screenLayout|smallestScreenSize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".KurnikDream"
+                      android:exported="true"
+                      android:icon="@mipmap/ic_launcher"
+                      android:label="@string/app_name"
+                      android:permission="android.permission.BIND_DREAM_SERVICE">
+                      <intent-filter>
+                          <action android:name="android.service.dreams.DreamService" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                      </intent-filter>
+                  </service>
+              </application>
+          </manifest>
+          XML_EOF
+
+          cat > app/src/main/res/values/styles.xml <<'XML_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="bg">#080B1F</color>
+              <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+                  <item name="android:windowBackground">@color/bg</item>
+                  <item name="android:statusBarColor">@color/bg</item>
+                  <item name="android:navigationBarColor">@color/bg</item>
+              </style>
+          </resources>
+          XML_EOF
+
+          cat > app/src/main/res/values/strings.xml <<XML_EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Kurník Kvok</string>
+              <string name="start_url">$URL_XML</string>
+          </resources>
+          XML_EOF
+
+          cat > app/src/main/java/cz/kvok/kurnik/MainActivity.java <<'JAVA_EOF'
+          package cz.kvok.kurnik;
+
+          import android.app.Activity;
+          import android.graphics.Color;
+          import android.os.Bundle;
+          import android.os.Handler;
+          import android.os.Looper;
+          import android.view.View;
+          import android.view.WindowManager;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+
+          public class MainActivity extends Activity {
+
+              private WebView web;
+              private String startUrl;
+              private final Handler handler = new Handler(Looper.getMainLooper());
+
+              private final Runnable retry = new Runnable() {
+                  @Override
+                  public void run() {
+                      web.loadUrl(startUrl);
+                  }
+              };
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                  startUrl = getString(R.string.start_url);
+
+                  web = new WebView(this);
+                  web.setBackgroundColor(Color.parseColor("#080B1F"));
+
+                  WebSettings settings = web.getSettings();
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setMediaPlaybackRequiresUserGesture(false);
+                  settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+
+                  web.setWebChromeClient(new WebChromeClient());
+                  web.setWebViewClient(new WebViewClient() {
+                      @Override
+                      @SuppressWarnings("deprecation")
+                      public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
+                          if (failingUrl != null && failingUrl.startsWith(startUrl)) {
+                              showOfflineAndRetry();
+                          }
+                      }
+                  });
+
+                  setContentView(web);
+                  web.requestFocus();
+                  web.loadUrl(startUrl);
+              }
+
+              private void showOfflineAndRetry() {
+                  String html = "<html><body style='margin:0;background:#080B1F;color:#F4F1FF;"
+                          + "font-family:sans-serif;display:flex;align-items:center;justify-content:center;"
+                          + "height:100vh;text-align:center'><div>"
+                          + "<div style='font-size:90px'>&#128020;</div>"
+                          + "<div style='font-size:42px;font-weight:bold'>Kurn&iacute;k nem&aacute; p&#345;ipojen&iacute;</div>"
+                          + "<div style='font-size:28px;opacity:.7;margin-top:14px'>"
+                          + "Zkou&scaron;&iacute;m znovu za chv&iacute;li&hellip;</div></div></body></html>";
+                  web.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null);
+                  handler.removeCallbacks(retry);
+                  handler.postDelayed(retry, 15000);
+              }
+
+              private void hideSystemUi() {
+                  getWindow().getDecorView().setSystemUiVisibility(
+                          View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                                  | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                                  | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                                  | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                                  | View.SYSTEM_UI_FLAG_FULLSCREEN
+                                  | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+              }
+
+              @Override
+              public void onWindowFocusChanged(boolean hasFocus) {
+                  super.onWindowFocusChanged(hasFocus);
+                  if (hasFocus) {
+                      hideSystemUi();
+                  }
+              }
+
+              @Override
+              protected void onResume() {
+                  super.onResume();
+                  hideSystemUi();
+                  web.onResume();
+              }
+
+              @Override
+              protected void onPause() {
+                  web.onPause();
+                  super.onPause();
+              }
+
+              @Override
+              protected void onDestroy() {
+                  handler.removeCallbacksAndMessages(null);
+                  web.destroy();
+                  super.onDestroy();
+              }
+          }
+          JAVA_EOF
+
+          cat > app/src/main/java/cz/kvok/kurnik/KurnikDream.java <<'JAVA_EOF'
+          package cz.kvok.kurnik;
+
+          import android.graphics.Color;
+          import android.service.dreams.DreamService;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+
+          /** Spořič obrazovky: po nečinnosti televize zobrazí prezentaci Kurník Kvok. */
+          public class KurnikDream extends DreamService {
+
+              private WebView web;
+
+              @Override
+              public void onAttachedToWindow() {
+                  super.onAttachedToWindow();
+                  setInteractive(false);
+                  setFullscreen(true);
+                  setScreenBright(true);
+
+                  web = new WebView(this);
+                  web.setBackgroundColor(Color.parseColor("#080B1F"));
+                  WebSettings settings = web.getSettings();
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setMediaPlaybackRequiresUserGesture(false);
+                  setContentView(web);
+              }
+
+              @Override
+              public void onDreamingStarted() {
+                  super.onDreamingStarted();
+                  web.loadUrl(getString(R.string.start_url));
+              }
+
+              @Override
+              public void onDetachedFromWindow() {
+                  super.onDetachedFromWindow();
+                  if (web != null) {
+                      web.destroy();
+                      web = null;
+                  }
+              }
+          }
+          JAVA_EOF
+          echo "Projekt vytvořen: $(find . -type f | wc -l) souborů"
+
+      - name: Vytvořit ikonu a banner
+        run: |
+          sudo apt-get install -y -qq fonts-dejavu-core > /dev/null 2>&1 || true
+          cat > /tmp/make_images.py <<'PY_EOF'
+          import os, sys, random
+          from PIL import Image, ImageDraw, ImageFont
+          RES = sys.argv[1] if len(sys.argv) > 1 else 'res'
+
+          def hen_icon(size):
+              """Slepice na tmavě hnědém podkladu (stejný styl jako ikona aplikace)."""
+              img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+              d = ImageDraw.Draw(img); s = size / 512
+              d.rounded_rectangle([0, 0, size - 1, size - 1], radius=int(90 * s), fill=(123, 50, 0, 255))
+              def ell(cx, cy, rx, ry, fill, outline=None, ow=1):
+                  d.ellipse([(cx - rx) * s, (cy - ry) * s, (cx + rx) * s, (cy + ry) * s], fill=fill, outline=outline, width=max(1, int(ow * s)))
+              def ln(x1, y1, x2, y2, fill, w): d.line([(x1 * s, y1 * s), (x2 * s, y2 * s)], fill=fill, width=max(1, int(w * s)))
+              cream = (253, 240, 213, 255); rust = (212, 86, 10, 255); red = (232, 32, 10, 255); straw = (232, 192, 96, 255); dark = (26, 8, 0, 255); white = (255, 255, 255, 255); rust2 = (184, 74, 30, 255)
+              ell(400, 275, 50, 22, (123, 50, 0, 255)); ell(408, 258, 44, 20, rust2); ell(394, 292, 44, 20, (106, 40, 0, 255))
+              ell(295, 312, 150, 125, rust); ell(265, 330, 95, 48, rust2); ell(272, 336, 76, 36, (200, 80, 30, 255))
+              ell(140, 218, 74, 74, rust)
+              for cx, cy, r in [(106, 156, 17), (134, 144, 21), (162, 156, 17)]: ell(cx, cy, r, r, red)
+              ell(116, 298, 19, 23, red); ell(134, 304, 17, 21, (200, 20, 10, 255))
+              ell(112, 214, 21, 21, white); ell(116, 214, 12, 12, dark); ell(122, 208, 5, 5, white)
+              d.polygon([(52 * s, 222 * s), (96 * s, 208 * s), (90 * s, 238 * s)], fill=straw)
+              ell(224, 458, 12, 26, straw); ell(250, 458, 12, 26, straw)
+              for lx in (224, 250):
+                  for dx, dy in ((-16, 18), (0, 22), (16, 18)): ln(lx, 472, lx + dx, 472 + dy, straw, 5)
+              ell(378, 458, 34, 42, cream, straw, 5)
+              return img
+
+          def font(size, bold=True):
+              for p in ('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf' if bold else '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+                        '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf', '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf'):
+                  if os.path.exists(p): return ImageFont.truetype(p, size)
+              return ImageFont.load_default()
+
+          def banner(w=640, h=360):
+              bg = Image.new('RGBA', (w, h))
+              px = bg.load()
+              top, bot = (8, 11, 31), (59, 29, 134)
+              for y in range(h):
+                  t = y / (h - 1)
+                  c = tuple(int(top[i] + (bot[i] - top[i]) * t) for i in range(3)) + (255,)
+                  for x in range(w): px[x, y] = c
+              d = ImageDraw.Draw(bg); random.seed(3)
+              for _ in range(46):
+                  x, y, r = random.randint(0, w), random.randint(0, int(h * .7)), random.choice((1, 1, 2))
+                  d.ellipse([x - r, y - r, x + r, y + r], fill=(255, 255, 255, random.randint(110, 255)))
+              d.ellipse([w - 120, 24, w - 64, 80], fill=(255, 243, 176, 255))   # měsíc
+              ic = hen_icon(200).convert('RGBA'); bg.alpha_composite(ic, (44, (h - 200) // 2 - 6))
+              d.text((272, 104), 'Kurník', font=font(66), fill=(254, 228, 64, 255))
+              d.text((272, 178), 'Hotel Kvok', font=font(48), fill=(255, 255, 255, 255))
+              d.text((272, 246), 'evidence vajec · TV', font=font(26, False), fill=(0, 245, 212, 255))
+              return bg.convert('RGB')
+
+          for name, px in (('mdpi', 48), ('hdpi', 72), ('xhdpi', 96), ('xxhdpi', 144), ('xxxhdpi', 192)):
+              p = os.path.join(RES, 'mipmap-' + name); os.makedirs(p, exist_ok=True)
+              hen_icon(512).resize((px, px), Image.LANCZOS).save(os.path.join(p, 'ic_launcher.png'))
+          p = os.path.join(RES, 'drawable-xhdpi'); os.makedirs(p, exist_ok=True)
+          banner().save(os.path.join(p, 'banner.png'))
+          print('obrázky vytvořeny v', RES)
+          PY_EOF
+          if python3 -c "import PIL" 2>/dev/null; then PY=python3; else python3 -m venv /tmp/imgenv && /tmp/imgenv/bin/pip install --quiet pillow && PY=/tmp/imgenv/bin/python; fi
+          $PY /tmp/make_images.py kurnik-tv/app/src/main/res
+
+      - name: Sestavit APK
+        working-directory: kurnik-tv
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Připravit soubor
+        run: cp kurnik-tv/app/build/outputs/apk/debug/app-debug.apk KurnikKvok-TV.apk
+
+      - name: Uložit APK (záloha)
+        uses: actions/upload-artifact@v4
+        with:
+          name: KurnikKvok-TV-apk
+          path: KurnikKvok-TV.apk
+
+      - name: Zveřejnit ke stažení (Releases)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete apk-tv --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create apk-tv KurnikKvok-TV.apk --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Kurník Kvok pro Android TV" --notes "Aplikace pro Android TV. Stáhněte KurnikKvok-TV.apk a nainstalujte na televizi."
